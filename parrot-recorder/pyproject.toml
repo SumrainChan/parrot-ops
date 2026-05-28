@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "parrot-recorder"
+version = "0.1.0"
+description = "Demonstrate once, execute anywhere — record terminal operations and generate reusable Skill YAML for AI agents"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [{name = "Sumrain"}]
+keywords = ["devops", "automation", "asciinema", "skill", "ai-agent", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Software Development :: Code Generators",
+]
+
+dependencies = [
+    "pyte>=0.8.0",
+    "pyyaml>=6.0",
+    "anthropic>=0.30.0",
+    "openai>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+]
+
+[project.scripts]
+parrot = "parrot_recorder.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/sumrainchan/parrot-ops"
+Repository = "https://github.com/sumrainchan/parrot-ops"
+Issues = "https://github.com/sumrainchan/parrot-ops/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
