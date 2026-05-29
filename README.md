@@ -21,10 +21,23 @@ cp .env.example .env
 pip install ./parrot-recorder
 
 # 3. Record and generate a Skill
-parrot record
+parrot learn
 
-# Or create one interactively
+# Or record offline (skip LLM), compose later
+parrot learn --skip-llm                    # saves .parrot.json
+parrot compose <output>.parrot.json        # generates Skill YAML
+
+# Or create one interactively (no recording needed)
 parrot new
+```
+
+## CLI Reference
+
+```
+parrot learn               Record + generate Skill YAML (--skip-llm for offline)
+parrot compose <file>      Generate Skill YAML from .parrot.json or .cast
+parrot new                 Interactive Skill creation (no recording)
+parrot validate <file>     Validate a Skill YAML file
 ```
 
 ## Skill YAML

@@ -40,7 +40,7 @@ dev = [
 ]
 
 [project.scripts]
-parrot = "parrot_recorder.cli:main"
+parrot = "recorder.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/sumrainchan/parrot-ops"
