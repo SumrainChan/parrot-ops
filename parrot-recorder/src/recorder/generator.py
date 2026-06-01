@@ -242,11 +242,169 @@ class SkillGenerator:
         self.config = config
 
     def generate(self, task: str, seg_result: SegmentationResult) -> str:
-        """Generate Skill YAML via LLM."""
-        commands_text = self._format_segments(seg_result.segments)
+        """Generate Skill YAML via LLM, with annotated context and post-fix."""
+        from .annotator import format_annotated_segments
+        commands_text = format_annotated_segments(seg_result.segments)
         user_prompt = f"Task: {task}\n\nCommands:\n{commands_text}"
         full_prompt = f"{SYSTEM_PROMPT}\n\n{user_prompt}"
-        return self._call_llm(full_prompt)
+        yaml_text = self._call_llm(full_prompt)
+        if yaml_text and not yaml_text.startswith("[ERROR]"):
+            yaml_text = self._post_process(yaml_text)
+        return yaml_text
+
+    def _post_process(self, yaml_text: str) -> str:
+        """Layer 2: Fix common LLM omissions in generated YAML."""
+        yaml_text = self._ensure_parameters_declared(yaml_text)
+        yaml_text = self._fix_missing_rollback(yaml_text)
+        yaml_text = self._fix_timeout(yaml_text)
+        yaml_text = self._fix_concurrency(yaml_text)
+        return yaml_text
+
+    def _fix_missing_rollback(self, yaml_text: str) -> str:
+        """Ensure destructive commands have rollback_risk declared."""
+        import re
+        lines = yaml_text.split("\n")
+        state_keywords = ["docker stop", "docker rm", "docker run", "docker build",
+                        "rm ", "mv ", "kill ", "systemctl stop", "systemctl restart",
+                        "apt install", "apt remove", "pip install", "pip uninstall",
+                        "npm install", "npm uninstall"]
+
+        in_step = False
+        has_null_rollback = False  # rollback: null (missing)
+        has_risk = False
+        step_cmd = ""
+        step_idx = -1
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("- id:"):
+                # Flush previous step
+                if in_step and has_null_rollback and not has_risk:
+                    if any(kw in step_cmd for kw in state_keywords):
+                        lines.insert(i, f"    rollback_risk: \"Destructive — ensure backup before execution\"")
+                    else:
+                        lines.insert(i, f"    rollback_risk: \"Read-only — no state change\"")
+                in_step = True
+                has_null_rollback = False
+                has_risk = False
+                step_cmd = ""
+                step_idx = i
+            elif in_step:
+                if "rollback:" in stripped:
+                    # Check if it's explicitly null (missing rollback)
+                    has_null_rollback = stripped.endswith("null")
+                if "rollback_risk:" in stripped:
+                    has_risk = True
+                if stripped.startswith("command:"):
+                    step_cmd = stripped
+
+        # Flush last step
+        if in_step and has_null_rollback and not has_risk:
+            if any(kw in step_cmd for kw in state_keywords):
+                lines.append("    rollback_risk: \"Destructive — ensure backup before execution\"")
+            else:
+                lines.append("    rollback_risk: \"Read-only — no state change\"")
+
+        return "\n".join(lines)
+
+    def _fix_timeout(self, yaml_text: str) -> str:
+        """Set reasonable timeout defaults based on command type."""
+        import re
+        lines = yaml_text.split("\n")
+        for i, line in enumerate(lines):
+            m = re.match(r"(\s+)timeout_seconds:\s*(\d+)", line)
+            if m and int(m.group(2)) < 5:
+                # Find the command for this step
+                for j in range(i - 1, max(i - 20, 0), -1):
+                    cmd_m = re.match(r"\s+command:\s*(.+)", lines[j])
+                    if cmd_m:
+                        cmd = cmd_m.group(1)
+                        indent = m.group(1)
+                        if any(kw in cmd for kw in ["docker build", "apt install",
+                            "pip install", "npm install", "git clone"]):
+                            lines[i] = f"{indent}timeout_seconds: 120"
+                        elif any(kw in cmd for kw in ["docker run", "docker stop",
+                            "docker rm", "systemctl"]):
+                            lines[i] = f"{indent}timeout_seconds: 30"
+                        else:
+                            lines[i] = f"{indent}timeout_seconds: 10"
+                        break
+        return "\n".join(lines)
+
+    def _fix_concurrency(self, yaml_text: str) -> str:
+        """Auto-set concurrency: allow for read-only skills."""
+        import re
+        lines = yaml_text.split("\n")
+
+        # Check if all steps are read-only
+        ro_patterns = [r"^\s+command:\s*(ls|cat|grep|df|free|du|ps|docker ps|curl|wget|echo|whoami|pwd|hostname|date|uname)(\s|$)",
+                      r"status$", r" is-", r" list", r"^git log", r"^git status",
+                      r"^git diff", r"^git branch", r"^docker logs", r"^docker inspect"]
+
+        all_ro = True
+        for line in lines:
+            if line.strip().startswith("command:"):
+                if not any(re.search(p, line) for p in ro_patterns):
+                    all_ro = False
+                    break
+
+        if all_ro:
+            for i, line in enumerate(lines):
+                if line.strip().startswith("concurrency:") and "allow" not in line:
+                    lines[i] = "concurrency: allow"
+                    break
+
+        return "\n".join(lines)
+
+    def _ensure_parameters_declared(self, yaml_text: str) -> str:
+        """Auto-declare template variables used in steps but missing from parameters."""
+        import re as _re
+        import yaml as _yaml
+
+        # Find all {{var}} references in the YAML
+        used_vars = set(_re.findall(r"\{\{(\w+)\}\}", yaml_text))
+
+        # Find already-declared parameter names
+        declared = set(_re.findall(r"^\s+- name: (\w+)", yaml_text, _re.MULTILINE))
+
+        missing = used_vars - declared
+        if not missing:
+            return yaml_text
+
+        # Build the new parameter entries
+        new_entries = []
+        for var in sorted(missing):
+            new_entries.append(f"  - name: {var}")
+            new_entries.append(f"    type: string")
+            new_entries.append(f"    required: true")
+            new_entries.append(f"    description: \"{var} (auto-detected)\"")
+
+        # Insert after existing parameters section, or after description if none
+        if declared:
+            # Find the last parameter definition and insert after it
+            last_param_idx = -1
+            lines = yaml_text.split("\n")
+            for i, line in enumerate(lines):
+                if _re.match(r"^\s+- name: ", line):
+                    # Go to the end of this param block
+                    j = i + 1
+                    while j < len(lines) and (lines[j].startswith("    ") or not lines[j].strip()):
+                        j += 1
+                    last_param_idx = j
+            if last_param_idx > 0:
+                lines = lines[:last_param_idx] + new_entries + lines[last_param_idx:]
+                return "\n".join(lines)
+
+        # No existing parameters section — add one after description
+        lines = yaml_text.split("\n")
+        insert_at = 3  # name, version, description = 3 lines
+        if insert_at < len(lines):
+            blank_line = "" if not lines[insert_at].strip() else ""
+            new_section = ["", "parameters:"] + new_entries + [""]
+            lines = lines[:insert_at] + [blank_line] + new_section + lines[insert_at + (0 if blank_line else 0):]
+            return "\n".join(lines)
+
+        return yaml_text
 
     def generate_template(self, task: str, seg_result: SegmentationResult) -> str:
         """Generate a template YAML without LLM."""
