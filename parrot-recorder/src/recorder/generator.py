@@ -560,20 +560,61 @@ class SkillGenerator:
                 model=self.config.model,
                 max_tokens=4096,
                 messages=[{"role": "user", "content": full_prompt}],
+                stream=False,
             )
-            return self._extract_yaml(response.choices[0].message.content)
+            if hasattr(response, "choices") and response.choices:
+                return self._extract_yaml(response.choices[0].message.content)
+            if isinstance(response, dict):
+                choices = response.get("choices", [])
+                if choices:
+                    msg = choices[0].get("message", {})
+                    if isinstance(msg, dict):
+                        return self._extract_yaml(msg.get("content", str(response)))
+                    return str(msg)
+            return str(response)
         except ImportError:
             return "[ERROR] openai package not installed"
         except Exception as e:
             return f"[ERROR] OpenAI API call failed: {e}"
 
     def _extract_yaml(self, text: str) -> str:
+        # 1. Fenced yaml block
         m = re.search(r"```yaml\s*\n(.*?)\n```", text, re.DOTALL)
         if m:
             return m.group(1).strip()
+        # 2. Any fenced block containing YAML
         m = re.search(r"```\s*\n(.*?)\n```", text, re.DOTALL)
         if m:
-            return m.group(1).strip()
+            content = m.group(1).strip()
+            if "name:" in content and "steps:" in content:
+                return content
+        # 3. YAML embedded in free text — find 'name: <skill>' line
+        yaml_start = re.search(r"^name:\s*\S+", text, re.MULTILINE)
+        if yaml_start:
+            lines = text.split("\n")
+            start_idx = 0
+            for i, line in enumerate(lines):
+                if re.match(r"^name:\s*\S+", line.strip()):
+                    start_idx = i
+                    break
+            yaml_lines = []
+            for line in lines[start_idx:]:
+                stripped = line.strip()
+                if not stripped:
+                    yaml_lines.append(line)
+                    continue
+                is_yaml_key = bool(re.match(r"^[a-z][\w-]*:\s*$|^[a-z][\w-]*:\s", stripped))
+                is_indented = line[0] in (" ", "\t")
+                is_comment = stripped.startswith("#")
+                is_list_item = stripped.startswith("- ")
+                if is_yaml_key or is_indented or is_comment or is_list_item:
+                    yaml_lines.append(line)
+                else:
+                    break
+            result = "\n".join(yaml_lines).strip()
+            if "name:" in result and "steps:" in result:
+                return result
+        # 4. Fallback: return raw text
         return text.strip()
 
     def _needs_quoting(self, val: str) -> bool:

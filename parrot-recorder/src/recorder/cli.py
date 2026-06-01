@@ -3,10 +3,28 @@
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 from .config import load_config
+
+
+def _reset_terminal():
+    """Restore terminal to sane state (after asciinema raw mode)."""
+    if sys.stdin.isatty():
+        subprocess.run(["stty", "sane"], capture_output=True)
+
+
+_real_input = input
+
+def _safe_input(prompt: str = "") -> str:
+    """Reset terminal before reading input (fix backspace after asciinema)."""
+    _reset_terminal()
+    if prompt:
+        sys.stdout.write(prompt)
+        sys.stdout.flush()
+    return sys.stdin.readline().rstrip("\n")
 
 
 def cmd_learn(args):
@@ -64,7 +82,7 @@ def cmd_learn(args):
     # Phase 4: Task description
     task = args.task
     if not task:
-        task = input("Task description (one sentence): ").strip()
+        task = _safe_input("Task description (one sentence): ").strip()
         if not task:
             print("[parrot] Task description required. Aborting.")
             sys.exit(1)
@@ -96,14 +114,14 @@ def cmd_learn(args):
         print(f"[parrot] Non-interactive mode: saving to {output_path}")
     else:
         while True:
-            choice = input(f"\nSave to {output_path}? [Y/n/e edit path]: ").strip().lower()
+            choice = _safe_input(f"\nSave to {output_path}? [Y/n/e edit path]: ").strip().lower()
             if choice in ("", "y", "yes"):
                 break
             elif choice == "n":
                 print("[parrot] Discarded.")
                 sys.exit(0)
             elif choice == "e":
-                new_path = input("  Path: ").strip()
+                new_path = _safe_input("  Path: ").strip()
                 if new_path:
                     output_path = Path(new_path)
             else:
@@ -159,7 +177,7 @@ def cmd_compose(args):
     # Phase 2: Task description
     task = args.task
     if not task:
-        task = input("Task description (one sentence): ").strip()
+        task = _safe_input("Task description (one sentence): ").strip()
         if not task:
             print("[parrot] Task description required. Aborting.")
             sys.exit(1)
@@ -197,14 +215,14 @@ def cmd_compose(args):
         print(f"[parrot] Non-interactive mode: saving to {output_path}")
     else:
         while True:
-            choice = input(f"\nSave to {output_path}? [Y/n/e edit path]: ").strip().lower()
+            choice = _safe_input(f"\nSave to {output_path}? [Y/n/e edit path]: ").strip().lower()
             if choice in ("", "y", "yes"):
                 break
             elif choice == "n":
                 print("[parrot] Discarded.")
                 sys.exit(0)
             elif choice == "e":
-                new_path = input("  Path: ").strip()
+                new_path = _safe_input("  Path: ").strip()
                 if new_path:
                     output_path = Path(new_path)
             else:
@@ -233,18 +251,18 @@ def cmd_new(args):
 
     print("Parrot — Create a new Skill\n")
 
-    name = input("Skill name (kebab-case): ").strip()
+    name = _safe_input("Skill name (kebab-case): ").strip()
     while not name:
-        name = input("Skill name (kebab-case): ").strip()
+        name = _safe_input("Skill name (kebab-case): ").strip()
 
-    desc = input("Description: ").strip()
+    desc = _safe_input("Description: ").strip()
     while not desc:
-        desc = input("Description: ").strip()
+        desc = _safe_input("Description: ").strip()
 
     print("\nParameters (name=default_value, empty to finish):")
     params = []
     while True:
-        entry = input(f"  param [{len(params) + 1}]: ").strip()
+        entry = _safe_input(f"  param [{len(params) + 1}]: ").strip()
         if not entry:
             break
         if "=" in entry:
@@ -254,24 +272,24 @@ def cmd_new(args):
         else:
             params.append({"name": entry, "type": "string"})
 
-    conc = input("\nConcurrency [block/allow] (default block): ").strip()
+    conc = _safe_input("\nConcurrency [block/allow] (default block): ").strip()
     concurrency = conc if conc in ("block", "allow") else "block"
 
     print("\nSteps (empty command to finish):")
     steps = []
     sid = 1
     while True:
-        cmd = input(f"  step {sid} command (empty to finish): ").strip()
+        cmd = _safe_input(f"  step {sid} command (empty to finish): ").strip()
         if not cmd:
             break
-        timeout_str = input(f"    timeout_seconds (default 30): ").strip()
+        timeout_str = _safe_input(f"    timeout_seconds (default 30): ").strip()
         timeout = int(timeout_str) if timeout_str else 30
 
-        retry_str = input(f"    retry (default 0): ").strip()
+        retry_str = _safe_input(f"    retry (default 0): ").strip()
         retry = int(retry_str) if retry_str else 0
 
-        expected = input(f"    expected_output_pattern (optional): ").strip()
-        rollback = input(f"    rollback command (optional): ").strip()
+        expected = _safe_input(f"    expected_output_pattern (optional): ").strip()
+        rollback = _safe_input(f"    rollback command (optional): ").strip()
 
         steps.append({
             "id": name.replace("-", "_") + f"_step{sid}",
