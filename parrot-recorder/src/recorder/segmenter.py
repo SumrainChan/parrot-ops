@@ -9,9 +9,9 @@ from .cleaner import CleanResult, CleanEvent
 
 # Prompt patterns (ordered by specificity)
 PROMPT_PATTERNS = [
-    re.compile(r"^[^#\$]*@[^#\$]*[#$] "),     # root@host:~#
-    re.compile(r"^[^#\$]*[#$] "),               # ~$ / /tmp# / / #
-    re.compile(r"[#$>] $"),                      # trailing prompt char
+    re.compile(r"^[^#\$]*@[^#\$]*[#$]( |$)"),    # root@host:~#
+    re.compile(r"^[^#\$]*[#$]( |$)"),             # ~$ / /tmp# / / #
+    re.compile(r"[#$>]( |$)"),                     # trailing prompt char
 ]
 
 # Sensitive info patterns
@@ -58,21 +58,28 @@ class Segmenter:
             return self._segment_without_stdin(clean)
 
     def _segment_with_stdin(self, clean: CleanResult) -> SegmentationResult:
-        """Exact segmentation using 'i' events."""
+        """Command text from pyte screen echo, output from pyte screen state.
+
+        Strategy:
+        1. Feed ALL 'o' events through pyte to reconstruct terminal state
+        2. 'i' events with \\r mark command boundaries (Enter pressed)
+        3. At each Enter, extract ALL completed commands from the pyte screen
+           (the screen shows the echo of the final edited command line)
+        4. After the last Enter, use the final screen state to extract
+           commands with their outputs
+        """
         segments = []
         tui_warnings = []
         secret_warnings = []
 
-        pending_cmd = None
-        pending_cmd_ts = 0.0
-        pending_raw = ""
+        screen = pyte.Screen(200, 1000)
+        stream = pyte.Stream(screen)
+
         in_tui = False
-        last_prompt_ts = 0.0
-        current_prompt = ""
-        container_context = ""
+        # Track commands extracted at each Enter press
+        executed_commands = []  # list of (timestamp, command_text)
 
         for ev in clean.events:
-            # TUI tracking
             if ev.in_tui and not in_tui:
                 tui_warnings.append(f"[{ev.timestamp:.1f}s] TUI mode entered")
                 in_tui = True
@@ -80,64 +87,47 @@ class Segmenter:
                 tui_warnings.append(f"[{ev.timestamp:.1f}s] TUI mode exited")
                 in_tui = False
 
-            if ev.event_type == "i" and not in_tui:
-                # Flush previous command
-                if pending_cmd is not None:
-                    output = self._extract_output(pending_raw, pending_cmd)
-                    secrets = self._scan_secrets(pending_cmd)
-                    if secrets:
-                        secret_warnings.extend(
-                            f"[{pending_cmd[:60]}] {s}" for s in secrets)
-                    segments.append(Segment(
-                        command=pending_cmd,
-                        output=output,
-                        prompt=current_prompt,
-                        start_time=pending_cmd_ts,
-                        end_time=ev.timestamp,
-                        in_tui=False,
-                        container_context=container_context,
-                        secrets=secrets,
-                    ))
+            if ev.event_type == "o" and not in_tui:
+                stream.feed(ev.raw_data)
 
-                pending_cmd = ev.data.strip().rstrip("\r")
-                pending_cmd_ts = ev.timestamp
-                pending_raw = ""
+            elif ev.event_type == "i" and not in_tui:
+                if "\r" in ev.data or "\n" in ev.data:
+                    # Enter pressed — extract the command from current screen
+                    cmd_text = self._extract_command_at_cursor(screen)
+                    if cmd_text:
+                        executed_commands.append((ev.timestamp, cmd_text))
 
-                # Detect container context changes
-                if pending_cmd.startswith("docker exec -it "):
-                    parts = pending_cmd.split()
-                    for i, p in enumerate(parts):
-                        if p == "-it" and i + 2 < len(parts):
-                            container_context = parts[i + 2]  # container name
-                            break
+        # Now extract ALL segments from final screen (includes outputs)
+        clean_lines = [l.rstrip() for l in screen.display if l.rstrip()]
+        all_segments = self._split_by_prompts(clean_lines)
 
-                if pending_cmd in ("exit", "exit\r") and container_context:
-                    container_context = ""  # Back to host
+        # Only keep commands that were actually executed (Enter pressed)
+        executed_cmd_texts = set(cmd for _, cmd in executed_commands)
+        real_segments = [s for s in all_segments if s.command in executed_cmd_texts]
 
-            elif ev.event_type == "o" and not in_tui:
-                pending_raw += ev.raw_data
-                # Detect prompt
-                for line in self._get_display_lines(ev.raw_data):
-                    if self._is_prompt(line.rstrip()):
-                        current_prompt = line.rstrip()
-                        last_prompt_ts = ev.timestamp
+        # Dedup: keep only the LAST occurrence of each command
+        seen = {}
+        for s in real_segments:
+            seen[s.command] = s  # last wins
+        segments = list(seen.values())
 
-        # Flush last command
-        if pending_cmd is not None:
-            output = self._extract_output(pending_raw, pending_cmd)
-            secrets = self._scan_secrets(pending_cmd)
-            if secrets:
-                secret_warnings.extend(
-                    f"[{pending_cmd[:60]}] {s}" for s in secrets)
-            segments.append(Segment(
-                command=pending_cmd,
-                output=output,
-                prompt=current_prompt,
-                start_time=pending_cmd_ts,
-                end_time=last_prompt_ts,
-                container_context=container_context,
-                secrets=secrets,
-            ))
+        # Sort by the order of execution
+        cmd_order = {cmd: i for i, (_, cmd) in enumerate(executed_commands)}
+        segments.sort(key=lambda s: cmd_order.get(s.command, 999))
+
+        secret_warnings = []
+        for seg in segments:
+            s = self._scan_secrets(seg.command)
+            if s:
+                secret_warnings.extend(f"[{seg.command[:60]}] {x}" for x in s)
+
+            # Detect container context
+            if seg.command.startswith("docker exec -it "):
+                parts = seg.command.split()
+                for i, p in enumerate(parts):
+                    if p == "-it" and i + 2 < len(parts):
+                        seg.container_context = parts[i + 2]
+                        break
 
         return SegmentationResult(
             segments=segments,
@@ -221,17 +211,17 @@ class Segmenter:
 
         for line in lines:
             if self._is_prompt(line):
-                if cmd and output_lines:
-                    segments.append(Segment(
-                        command=cmd, output="\n".join(output_lines)))
+                if cmd:
+                    output = "\n".join(output_lines) if output_lines else "(no output)"
+                    segments.append(Segment(command=cmd, output=output))
                     output_lines = []
                 cmd = self._extract_command_from_prompt(line)
             elif cmd:
                 output_lines.append(line)
 
-        if cmd and output_lines:
-            segments.append(Segment(
-                command=cmd, output="\n".join(output_lines)))
+        if cmd:
+            output = "\n".join(output_lines) if output_lines else "(no output)"
+            segments.append(Segment(command=cmd, output=output))
         return segments
 
     def _extract_command_from_prompt(self, prompt_line: str) -> str:
@@ -239,7 +229,9 @@ class Segmenter:
         for pat in PROMPT_PATTERNS:
             m = pat.search(prompt_line)
             if m:
-                return prompt_line[m.end():].strip()
+                # m.end() may include a trailing space; strip it
+                after = prompt_line[m.end():].strip()
+                return after
         return prompt_line
 
     def _is_prompt(self, text: str) -> bool:
@@ -256,6 +248,170 @@ class Segmenter:
         stream = pyte.Stream(screen)
         stream.feed(raw_data)
         return [l.rstrip() for l in screen.display if l.rstrip()]
+
+    def _extract_command_from_screen(self, prev_lines: list[str],
+                                       new_lines: list[str],
+                                       prev_prompt: str) -> str:
+        """Extract the actual command from pyte screen state.
+
+        When a new prompt appears, the command is the text between the previous
+        prompt line and the new prompt line. The shell echo contains the final
+        command after all editing (backspace, tab completion, etc.).
+        """
+        # Strategy: find the line with the previous prompt in prev_lines,
+        # then find what comes after it in new_lines
+
+        # Find previous prompt position
+        prev_prompt_idx = -1
+        for i, line in enumerate(prev_lines):
+            if prev_prompt and prev_prompt in line:
+                prev_prompt_idx = i
+                break
+        if not prev_prompt:
+            # No previous prompt detected - look for the line just before new prompt
+            prev_prompt_idx = len(prev_lines) - 1 if prev_lines else 0
+
+        # Find new prompt position in new_lines
+        new_prompt_idx = -1
+        for i, line in enumerate(new_lines):
+            if self._is_prompt(line):
+                new_prompt_idx = i
+                break
+        if new_prompt_idx < 0:
+            return ""
+
+        # Extract command: text between previous prompt and new prompt
+        # Typically: [prev prompt + cmd, output..., new prompt]
+        # The command is on the line immediately after the previous prompt
+
+        cmd_candidates = []
+
+        for i in range(prev_prompt_idx, min(new_prompt_idx + 1, len(new_lines))):
+            line = new_lines[i]
+            stripped = line.rstrip()
+            if not stripped:
+                continue
+
+            # If this line contains the previous prompt, extract text after it
+            if prev_prompt and prev_prompt in stripped:
+                after = stripped[stripped.rfind(prev_prompt) + len(prev_prompt):].strip()
+                if after:
+                    cmd_candidates.append(after)
+            elif self._is_prompt(stripped):
+                # This is the new prompt itself - extract text before the prompt
+                for pat in PROMPT_PATTERNS:
+                    m = pat.search(stripped)
+                    if m:
+                        before = stripped[:m.start()].strip()
+                        if before:
+                            cmd_candidates.append(before)
+                        break
+            else:
+                # Regular line between prompts - might be the command
+                cmd_candidates.append(stripped)
+
+        # The first non-empty content after the old prompt is the command
+        if cmd_candidates:
+            return cmd_candidates[0]
+
+        return ""
+
+    def _extract_command_at_cursor(self, screen) -> str:
+        """Extract the command being executed from the current pyte screen.
+
+        Called at the moment of Enter press. Finds the last prompt line
+        and extracts the command text after the prompt marker.
+        """
+        lines = [l.rstrip() for l in screen.display if l.rstrip()]
+        if not lines:
+            return ""
+
+        # Find the last prompt line (bottom-up search)
+        for i in range(len(lines) - 1, -1, -1):
+            line = lines[i]
+            for pat in PROMPT_PATTERNS:
+                m = pat.search(line)
+                if m:
+                    after = line[m.end():].strip()
+                    if after:
+                        return after
+                    # Check if the next line (if any) contains the command
+                    if i + 1 < len(lines):
+                        next_line = lines[i + 1].strip()
+                        if next_line and not self._is_prompt(next_line):
+                            return next_line
+                    return ""
+
+            # If the last non-empty line doesn't have a prompt, it might
+            # be the command being typed (no prompt visible on this screen)
+            if i == len(lines) - 1 and line:
+                return line
+
+        return ""
+
+    def _dedup_consecutive_same_cmd(self, segments: list) -> list:
+        """Merge consecutive segments with identical commands (tab completion).
+
+        When the user types a partial command and presses Tab multiple times,
+        the shell re-displays the prompt + command after each Tab. Each display
+        creates a segment with the same command and the completion listing as
+        'output'. We merge these: keep the last occurrence (which has no output
+        from a successful completion, or the actual command output if there is one).
+        """
+        if len(segments) <= 1:
+            return segments
+
+        merged = []
+        prev = segments[0]
+        for curr in segments[1:]:
+            if curr.command == prev.command:
+                # Same command — merge: keep the later segment's output
+                # (the earlier one's 'output' is tab completion noise)
+                prev = curr
+            else:
+                merged.append(prev)
+                prev = curr
+        merged.append(prev)
+        return merged
+
+    def _extract_command_from_screen_v2(self, screen, prev_prompt: str) -> str:
+        """Extract the command from pyte screen state.
+
+        The pyte screen shows what the terminal actually displays — after shell
+        line editing (backspace, tab completion, etc.). The command is the text
+        between the previous prompt and the current cursor position.
+        """
+        lines = [l.rstrip() for l in screen.display if l.rstrip()]
+        if not lines:
+            return ""
+
+        # Find the last prompt line and extract what follows it
+        for i in range(len(lines) - 1, -1, -1):
+            line = lines[i]
+            # Look for known prompt pattern in this line
+            for pat in PROMPT_PATTERNS:
+                m = pat.search(line)
+                if m:
+                    after = line[m.end():].strip()
+                    # If there's text after the prompt on the same line, it's a command
+                    if after:
+                        return after
+                    # Otherwise, the command might be on the next non-empty line
+                    for j in range(i + 1, len(lines)):
+                        next_line = lines[j].strip()
+                        if next_line and not self._is_prompt(next_line):
+                            return next_line
+                        elif self._is_prompt(next_line):
+                            break
+                    return ""
+
+            # Check if this line looks like a command echo (no prompt on this screen)
+            # This handles the case when typing hasn't produced a new prompt yet
+            if i == len(lines) - 1 and line and not self._is_prompt(line):
+                # The last line might be the command being typed
+                return line
+
+        return ""
 
     def _scan_secrets(self, text: str) -> list[str]:
         found = []

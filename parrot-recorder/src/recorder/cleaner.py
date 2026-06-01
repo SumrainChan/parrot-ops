@@ -82,10 +82,17 @@ class Cleaner:
             if etype == "i" and self._is_terminal_noise(data):
                 continue
 
+            # Don't strip 'i' events — they contain control chars (\r, \x7f, \t)
+            # that the segmenter needs for Enter detection and editing analysis
+            if etype == "i":
+                clean_data = data
+            else:
+                clean_data = data.strip()
+
             events.append(CleanEvent(
                 timestamp=ts,
                 event_type=etype,
-                data=data.strip(),
+                data=clean_data,
                 raw_data=data,
                 in_tui=in_tui,
             ))
