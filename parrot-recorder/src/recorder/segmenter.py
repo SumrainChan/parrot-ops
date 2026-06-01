@@ -37,6 +37,7 @@ class Segment:
     in_tui: bool = False
     container_context: str = ""       # e.g. "exif-nginx" if inside docker exec
     secrets: list[str] = field(default_factory=list)
+    interactive_config: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -97,23 +98,12 @@ class Segmenter:
                     if cmd_text:
                         executed_commands.append((ev.timestamp, cmd_text))
 
-        # Now extract ALL segments from final screen (includes outputs)
+        # Extract commands from the final pyte screen using prompt splitting
         clean_lines = [l.rstrip() for l in screen.display if l.rstrip()]
-        all_segments = self._split_by_prompts(clean_lines)
+        segments = self._split_by_prompts(clean_lines)
 
-        # Only keep commands that were actually executed (Enter pressed)
-        executed_cmd_texts = set(cmd for _, cmd in executed_commands)
-        real_segments = [s for s in all_segments if s.command in executed_cmd_texts]
-
-        # Dedup: keep only the LAST occurrence of each command
-        seen = {}
-        for s in real_segments:
-            seen[s.command] = s  # last wins
-        segments = list(seen.values())
-
-        # Sort by the order of execution
-        cmd_order = {cmd: i for i, (_, cmd) in enumerate(executed_commands)}
-        segments.sort(key=lambda s: cmd_order.get(s.command, 999))
+        # Merge consecutive duplicates (tab-completion noise)
+        segments = self._dedup_consecutive_same_cmd(segments)
 
         secret_warnings = []
         for seg in segments:

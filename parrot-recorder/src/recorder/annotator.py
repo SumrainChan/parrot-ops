@@ -47,8 +47,9 @@ NAVIGATION_PATTERNS = [
 PARAM_PATTERNS = [
     # Port numbers
     (re.compile(r"(?:-p|--port|:)\s*(\d{2,5})\b"), "port", "integer"),
-    # Service/container names (after common flags)
+    # Service/container names (after common flags and docker exec)
     (re.compile(r"--name\s+(\S+)"), "service_name", "string"),
+    (re.compile(r"docker\s+(?:exec|stop|rm|start|restart|logs|inspect)\s+(?:-it\s+)?(\S+)"), "container_name", "string"),
     # Image tags
     (re.compile(r"(\S+):(latest|v?\d+\.\d+)"), "image_tag", "string"),
     # File paths that are not system paths
@@ -175,7 +176,60 @@ class CommandAnnotator:
         return notes
 
 
-def format_annotated_segments(segments: list[Segment]) -> str:
+@dataclass
+class InteractiveHint:
+    step_index: int           # which step should be interactive
+    command: str               # the original command
+    param_value: str           # the value that might be user-chosen
+    param_name: str            # suggested variable name
+    source_step: int           # which step produced the "query" output
+    source_output: str         # the output containing the value
+
+
+def detect_interactive_hints(segments: list[Segment]) -> list[InteractiveHint]:
+    """Detect 'query → select' patterns across consecutive segments.
+
+    Pattern: step N is read-only (ss, docker ps, ls), step N+1 uses
+    a value that appears in step N's output — likely a user selection.
+    """
+    annotator = CommandAnnotator()
+    hints = []
+
+    for i in range(1, len(segments)):
+        prev = segments[i - 1]
+        curr = segments[i]
+
+        if prev.in_tui or curr.in_tui:
+            continue
+
+        prev_ann = annotator.annotate(prev)
+        curr_ann = annotator.annotate(curr)
+
+        # Previous step must be read-only (a "query")
+        if prev_ann.command_type != "read-only":
+            continue
+
+        # Current step must be state-changing (a "select + act")
+        if curr_ann.command_type not in ("state-changing", "navigation"):
+            continue
+
+        # Check if any parameterizable value in current step appears in previous output
+        for param in curr_ann.parameterizable:
+            if param["value"] in prev.output:
+                hints.append(InteractiveHint(
+                    step_index=i,
+                    command=curr.command,
+                    param_value=param["value"],
+                    param_name=param["suggested_name"],
+                    source_step=i - 1,
+                    source_output=prev.output,
+                ))
+
+    return hints
+
+
+def format_annotated_segments(segments: list[Segment],
+                              interactive_hints: list[InteractiveHint] = None) -> str:
     """Format segments with annotations for the LLM prompt."""
     annotator = CommandAnnotator()
     lines = []
@@ -208,6 +262,11 @@ def format_annotated_segments(segments: list[Segment]) -> str:
             annotations.append(f"context: inside {ann.container_context}")
         if ann.notes:
             annotations.extend(ann.notes)
+
+        # Interactive step hint
+        if seg.interactive_config:
+            ic = seg.interactive_config
+            annotations.append(f"INTERACTIVE: prompt=\"{ic['prompt']}\" variable={{{{{ic['variable']}}}}}")
 
         lines.append(f"  {i+1}. {cmd}")
         if annotations:

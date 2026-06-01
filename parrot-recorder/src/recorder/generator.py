@@ -7,7 +7,7 @@ from .segmenter import SegmentationResult, Segment
 
 # ── Skill YAML Schema ─────────────────────────────────────────────
 
-SKILL_SCHEMA = """## Skill YAML Schema v0.1
+SKILL_SCHEMA = """## Skill YAML Schema v0.2
 
 ```yaml
 name: <kebab-case-skill-name>
@@ -222,6 +222,9 @@ SYSTEM_PROMPT = f"""You are an operations automation expert. Analyze terminal re
 - Set retry: read-only=0, stop/rm=1, build=2
 - concurrency: block for state-changing, allow for read-only checks
 - Exclude TUI operations (vim, less, htop) from steps
+- When a segment is marked INTERACTIVE, output an interactive step instead of a regular step:
+  interactive: true, prompt: "user question", variable: varname, choices_from_output: step_id
+- Each INTERACTIVE segment creates a variable that subsequent steps can use as {{variable}}
 
 {SKILL_SCHEMA}
 

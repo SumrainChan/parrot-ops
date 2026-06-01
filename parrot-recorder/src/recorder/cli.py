@@ -71,7 +71,34 @@ def cmd_learn(args):
         for w in seg_result.tui_warnings:
             print(f"  {w[:120]}")
 
-    # Phase 3: Generate or save intermediate
+    # Phase 3.5: Detect interactive steps (human-in-the-loop patterns)
+    from .annotator import detect_interactive_hints
+    hints = detect_interactive_hints(seg_result.segments)
+    interactive_configs = {}  # step_index -> {prompt, variable}
+
+    if hints:
+        print(f"\n[parrot] Detected {len(hints)} step(s) that may need user interaction:")
+        for h in hints:
+            print(f"  Step {h.step_index + 1}: {h.command[:70]}")
+            print(f"    Value '{h.param_value}' found in Step {h.source_step + 1}'s output")
+            choice = _safe_input("    Mark as interactive (user selects value each run)? [y/N]: ").strip().lower()
+            if choice == "y":
+                prompt = _safe_input("      Prompt text: ").strip()
+                if not prompt:
+                    continue
+                var_name = _safe_input(f"      Variable name [{h.param_name}]: ").strip()
+                if not var_name:
+                    var_name = h.param_name
+                interactive_configs[h.step_index] = {
+                    "interactive": True,
+                    "prompt": prompt,
+                    "variable": var_name,
+                    "choices_from_output": f"step_{h.source_step + 1}",
+                }
+                seg_result.segments[h.step_index].interactive_config = interactive_configs[h.step_index]
+                print(f"    [parrot] Marked as interactive: variable={{{{{var_name}}}}}\n")
+
+    # Phase 4: Generate or save intermediate
     if args.skip_llm:
         parrot_path = _get_output_path(args.output, args.task, "parrot.json", config)
         _save_parrot_json(parrot_path, seg_result, cast_path)
@@ -396,6 +423,7 @@ def _save_parrot_json(path: Path, seg_result, cast_path: str):
                 "end_time": s.end_time,
                 "container_context": s.container_context,
                 "in_tui": s.in_tui,
+                "interactive_config": s.interactive_config if s.interactive_config else None,
             }
             for s in seg_result.segments
         ],
@@ -419,6 +447,7 @@ def _load_parrot_json(path: str):
             end_time=s.get("end_time", 0.0),
             container_context=s.get("container_context", ""),
             in_tui=s.get("in_tui", False),
+            interactive_config=s.get("interactive_config") or {},
         )
         for s in data["segments"]
     ]
