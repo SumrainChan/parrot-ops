@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "parrot-mcp"
+version = "0.1.0"
+description = "MCP server for Parrot Ops — discover and execute Skill YAML via AI Agent function calls"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [{name = "Sumrain"}]
+keywords = ["mcp", "devops", "automation", "skill", "ai-agent", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+]
+
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+parrot-mcp = "mcp.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/sumrainchan/parrot-ops"
+
+[tool.setuptools.packages.find]
+where = ["src"]
