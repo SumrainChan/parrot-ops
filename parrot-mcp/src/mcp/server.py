@@ -2,25 +2,34 @@
 
 import json
 import sys
-import yaml
 
 from .converter import (
-    load_skills, skill_to_tool, build_list_skills_tool, build_skill_search,
+    skill_to_tool, build_list_skills_tool, build_skill_search,
 )
 from .client import AgentClient
 
 
 class MCPServer:
-    """MCP stdio server — JSON-RPC 2.0 over stdin/stdout."""
+    """MCP stdio server — JSON-RPC 2.0 over stdin/stdout.
 
-    def __init__(self, skill_dir: str, agent_url: str):
-        self.skills = load_skills(skill_dir)
-        self.tools = self._build_tools()
+    Pulls skill list from parrot-agent on startup. Falls back to local
+    --skill-dir if agent doesn't have skills API.
+    """
+
+    def __init__(self, agent_url: str, skill_dir: str = ""):
         self.agent = AgentClient(agent_url)
         if not self.agent.health():
             print(f"[parrot-mcp] Agent not reachable at {agent_url}", file=sys.stderr)
-            print("[parrot-mcp] Start parrot-agent first.", file=sys.stderr)
             sys.exit(1)
+
+        # Pull skills from agent
+        self.skills = self.agent.list_skills()
+        if not self.skills and skill_dir:
+            # Fallback: load from local dir
+            from .converter import load_skills
+            self.skills = load_skills(skill_dir)
+
+        self.tools = self._build_tools()
         print(f"[parrot-mcp] Loaded {len(self.skills)} skills, agent OK", file=sys.stderr)
 
     def run(self):
@@ -69,6 +78,12 @@ class MCPServer:
 
     def _call_tool(self, name: str, args: dict) -> dict:
         """Execute a tool call."""
+        # Skill-named tools are shortcuts to execute_skill
+        known_skills = {s["name"] for s in self.skills}
+        if name in known_skills:
+            args["skill_name"] = name
+            return self._execute_skill(args)
+
         if name == "list_skills":
             query = args.get("query", "")
             results = build_skill_search(self.skills, query)
@@ -124,29 +139,16 @@ class MCPServer:
         if not skill_name:
             return self._text_result("Error: skill_name is required")
 
-        # Find skill
-        skill = None
-        for s in self.skills:
-            if s["name"] == skill_name:
-                skill = s
-                break
-        if not skill:
+        # Validate skill exists in agent
+        known = {s["name"] for s in self.skills}
+        if skill_name not in known:
             return self._text_result(
                 f"Skill '{skill_name}' not found. Available: "
-                + ", ".join(s["name"] for s in self.skills)
+                + ", ".join(sorted(known))
             )
 
-        # Validate required params
-        for p in skill.get("parameters", []):
-            if p.get("required") and p["name"] not in args.get("params", {}):
-                return self._text_result(
-                    f"Missing required parameter: {p['name']}"
-                )
-
-        # Submit to agent
         params = args.get("params", {})
-        skill_yaml = yaml.dump(skill, allow_unicode=True)
-        result = self.agent.execute(skill_yaml, params)
+        result = self.agent.execute_by_name(skill_name, params)
 
         # P0-4: Forward error context
         status = result.get("status", "unknown")

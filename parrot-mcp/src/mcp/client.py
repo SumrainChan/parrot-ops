@@ -21,10 +21,41 @@ class AgentClient:
         except Exception:
             return False
 
+    def list_skills(self) -> list[dict]:
+        """Get available skills from agent."""
+        try:
+            resp = self._get("/v1/skills")
+            skills = resp.get("skills", [])
+            # Convert to dict format expected by converter
+            result = []
+            for s in skills:
+                result.append({
+                    "name": s["name"],
+                    "version": s.get("version", "0.1.0"),
+                    "description": s.get("description", ""),
+                    "parameters": s.get("parameters", []),
+                    "steps": s.get("steps", []),
+                    "concurrency": s.get("concurrency", "allow"),
+                })
+            return result
+        except Exception:
+            return []
+
+    def register_skill(self, yaml_text: str) -> dict:
+        """Register a skill with the agent."""
+        return self._post("/v1/skills", {"skill": yaml_text})
+
     def execute(self, skill_yaml: str, params: dict) -> dict:
-        """Submit a skill for execution."""
+        """Submit a skill for execution by YAML text."""
         return self._post("/v1/execute", {
             "skill": skill_yaml,
+            "params": params,
+        })
+
+    def execute_by_name(self, skill_name: str, params: dict) -> dict:
+        """Submit a skill for execution by name (agent must have it registered)."""
+        return self._post("/v1/execute", {
+            "skill_name": skill_name,
             "params": params,
         })
 

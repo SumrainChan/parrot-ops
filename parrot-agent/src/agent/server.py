@@ -12,16 +12,18 @@ from pathlib import Path
 
 from .executor import SkillExecutor, ExecutionResult
 from .persistence import Persistence
+from .skills import SkillLibrary
 
 
 class AgentServer:
     """HTTP API server for parrot-agent."""
 
     def __init__(self, bind: str = "127.0.0.1", port: int = 9090,
-                 data_dir: str = None):
+                 data_dir: str = None, skill_dir: str = None):
         self.bind = bind
         self.port = port
         self.persistence = Persistence(data_dir)
+        self.skills = SkillLibrary(skill_dir)
         self.executors: dict[str, SkillExecutor] = {}  # task_id -> executor
         self.lock = threading.Lock()  # concurrency control (P0-5)
         self.httpd: HTTPServer = None
@@ -44,7 +46,9 @@ class AgentServer:
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
-                if self.path == "/v1/execute":
+                if self.path == "/v1/skills":
+                    agent._handle_register_skill(self)
+                elif self.path == "/v1/execute":
                     agent._handle_execute(self)
                 elif self.path.startswith("/v1/tasks/") and self.path.endswith("/resume"):
                     task_id = self.path.split("/")[3]
@@ -61,6 +65,13 @@ class AgentServer:
                 else:
                     self._send_json(404, {"error": "not_found"})
 
+            def do_DELETE(self):
+                if self.path.startswith("/v1/skills/"):
+                    name = self.path.split("/")[3]
+                    agent._handle_remove_skill(self, name)
+                else:
+                    self._send_json(404, {"error": "not_found"})
+
             def do_GET(self):
                 if self.path.startswith("/v1/tasks/") and self.path.endswith("/log"):
                     task_id = self.path.split("/")[3]
@@ -68,6 +79,8 @@ class AgentServer:
                 elif self.path.startswith("/v1/tasks/"):
                     task_id = self.path.split("/")[3]
                     agent._handle_get_task(self, task_id)
+                elif self.path == "/v1/skills":
+                    agent._handle_list_skills(self)
                 elif self.path == "/v1/health":
                     agent._handle_health(self)
                 elif self.path == "/v1/tasks":
@@ -96,11 +109,20 @@ class AgentServer:
 
     def _handle_execute(self, handler):
         body = handler._read_body()
-        skill_yaml = body.get("skill", "")
         params = body.get("params", {})
 
+        # Accept either skill YAML text or skill name
+        skill_yaml = body.get("skill", "")
+        skill_name = body.get("skill_name", "")
+
+        if skill_name:
+            skill_yaml = self.skills.get_yaml(skill_name)
+            if not skill_yaml:
+                handler._send_json(404, {"error": f"skill '{skill_name}' not found"})
+                return
+
         if not skill_yaml:
-            handler._send_json(400, {"error": "missing 'skill' field"})
+            handler._send_json(400, {"error": "missing 'skill' or 'skill_name' field"})
             return
 
         # Concurrency check
@@ -167,6 +189,28 @@ class AgentServer:
             "active_tasks": active,
             "completed_tasks": completed,
         })
+
+    def _handle_list_skills(self, handler):
+        skills = self.skills.list()
+        handler._send_json(200, {"skills": skills})
+
+    def _handle_register_skill(self, handler):
+        body = handler._read_body()
+        yaml_text = body.get("skill", "")
+        if not yaml_text:
+            handler._send_json(400, {"error": "missing 'skill' field"})
+            return
+        result = self.skills.register(yaml_text)
+        if "error" in result:
+            handler._send_json(400, result)
+        else:
+            handler._send_json(201, result)
+
+    def _handle_remove_skill(self, handler, name: str):
+        if self.skills.remove(name):
+            handler._send_json(200, {"status": "removed", "name": name})
+        else:
+            handler._send_json(404, {"error": "skill not found"})
 
     def _handle_list_tasks(self, handler):
         active = self.persistence.list_active_tasks()

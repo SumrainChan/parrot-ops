@@ -27,6 +27,61 @@ def _safe_input(prompt: str = "") -> str:
     return sys.stdin.readline().rstrip("\n")
 
 
+def cmd_register(args):
+    """Register a Skill YAML file with a parrot-agent."""
+    import json
+    import urllib.request
+    import urllib.error
+
+    skill_path = Path(args.skill_file)
+    if not skill_path.exists():
+        print(f"[parrot] File not found: {skill_path}")
+        sys.exit(1)
+
+    yaml_text = skill_path.read_text(encoding="utf-8")
+    data = json.dumps({"skill": yaml_text}).encode("utf-8")
+
+    url = f"{args.agent.rstrip('/')}/v1/skills"
+    req = urllib.request.Request(url, data=data, method="POST")
+    req.add_header("Content-Type", "application/json")
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+            if "error" in result:
+                print(f"[parrot] Registration failed: {result['error']}")
+                sys.exit(1)
+            print(f"[parrot] Registered '{result.get('name')}' to {args.agent}")
+    except urllib.error.HTTPError as e:
+        err = json.loads(e.read().decode("utf-8"))
+        print(f"[parrot] Agent error: {err.get('error', str(e))}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"[parrot] Cannot reach agent at {args.agent}: {e}")
+        sys.exit(1)
+
+
+def _prompt_register(skill_path: Path):
+    """Prompt user to register the generated skill with an agent."""
+    choice = _safe_input("\nRegister to agent? Enter URL or blank to skip: ").strip()
+    if choice:
+        import json, urllib.request, urllib.error
+        yaml_text = skill_path.read_text(encoding="utf-8")
+        data = json.dumps({"skill": yaml_text}).encode("utf-8")
+        url = f"{choice.rstrip('/')}/v1/skills"
+        req = urllib.request.Request(url, data=data, method="POST")
+        req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+                if "error" in result:
+                    print(f"[parrot] Registration failed: {result['error']}")
+                else:
+                    print(f"[parrot] Registered '{result.get('name')}' to {choice}")
+        except Exception as e:
+            print(f"[parrot] Cannot reach agent at {choice}: {e}")
+
+
 def cmd_learn(args):
     """Record terminal operations, then generate Skill YAML (or save intermediate with --skip-llm)."""
     from .recorder import Recorder
@@ -160,6 +215,7 @@ def cmd_learn(args):
     valid, errors = validate_text(yaml_text)
     if valid:
         print(f"[parrot] Saved and validated: {output_path}")
+        _prompt_register(output_path)
     else:
         print(f"[parrot] Saved: {output_path}")
         print(f"[parrot] Validation warnings ({len(errors)}):")
@@ -261,6 +317,7 @@ def cmd_compose(args):
     valid, errors = validate_text(yaml_text)
     if valid:
         print(f"[parrot] Saved and validated: {output_path}")
+        _prompt_register(output_path)
     else:
         print(f"[parrot] Saved: {output_path}")
         print(f"[parrot] Validation warnings ({len(errors)}):")
@@ -386,13 +443,21 @@ def main():
     # parrot new
     sub.add_parser("new", help="Create a Skill YAML interactively without recording")
 
+    # parrot register
+    p_register = sub.add_parser("register", help="Register a Skill YAML with parrot-agent")
+    p_register.add_argument("skill_file", help="Path to .skill.yaml file")
+    p_register.add_argument("--agent", "-a", default="http://127.0.0.1:9090",
+                            help="parrot-agent URL (default: http://127.0.0.1:9090)")
+
     # parrot validate
     p_validate = sub.add_parser("validate", help="Validate an existing Skill YAML file")
     p_validate.add_argument("skill_file", help="Path to .skill.yaml file")
 
     args = parser.parse_args()
 
-    if args.command == "learn":
+    if args.command == "register":
+        cmd_register(args)
+    elif args.command == "learn":
         cmd_learn(args)
     elif args.command == "compose":
         cmd_compose(args)
