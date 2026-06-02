@@ -65,6 +65,11 @@ class MCPServer:
             return None  # no response for notifications
 
         if method == "tools/list":
+            # Re-pull skills each time for live updates
+            skills = self.agent.list_skills()
+            if skills:
+                self.skills = skills
+                self.tools = self._build_tools()
             return self._response(req_id, {"tools": list(self.tools.values())})
 
         if method == "tools/call":
