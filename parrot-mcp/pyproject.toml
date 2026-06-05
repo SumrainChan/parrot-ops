@@ -28,7 +28,7 @@ dependencies = [
 dev = ["pytest>=8.0"]
 
 [project.scripts]
-parrot-mcp = "mcp.cli:main"
+parrot-mcp = "parrot_mcp.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/sumrainchan/parrot-ops"

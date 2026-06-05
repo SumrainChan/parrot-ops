@@ -5,15 +5,18 @@
 ## Quick Start
 
 ```bash
-# 1. 目标机：安装并启动 agent
-pip install parrot-recorder parrot-agent
+# 1. 目标机：克隆仓库，安装 recorder + agent
+git clone https://github.com/SumrainChan/parrot-ops.git
+cd parrot-ops
+pip install ./parrot-recorder ./parrot-agent
 parrot-agent --port 9090 &
 
 # 2. 目标机：录制操作
 parrot learn -t "部署 user-api 服务"
 # ... 执行你的运维操作 ... exit
 
-# 3. 本机：配置 Claude Code MCP
+# 3. 本机：安装 mcp，配置 Claude Code
+cd parrot-ops && pip install ./parrot-mcp
 # ~/.claude/mcp.json
 {
   "mcpServers": {
@@ -39,9 +42,9 @@ parrot learn -t "部署 user-api 服务"
 
 | | 安装 | 在哪运行 | 干什么 |
 |---|---|---|---|
-| parrot-recorder | `pip install parrot-recorder` | 目标机 | 录制操作 → 生成 Skill |
-| parrot-agent | `pip install parrot-agent` | 目标机 | 执行 Skill |
-| parrot-mcp | `pip install parrot-mcp` | 本机 | 对接 Claude Code |
+| parrot-recorder | `pip install ./parrot-recorder` | 目标机 | 录制操作 → 生成 Skill |
+| parrot-agent | `pip install ./parrot-agent` | 目标机 | 执行 Skill |
+| parrot-mcp | `pip install ./parrot-mcp` | 本机 | 对接 Claude Code |
 
 ## 文档
 
