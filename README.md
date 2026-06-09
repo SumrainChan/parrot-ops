@@ -1,10 +1,10 @@
 # 🦜 Parrot Ops
 
-**我教会了我的鹦鹉写 Shell**
+**演示一次，处处执行**
 
-把终端操作录制为 AI Agent 可执行的运维 Skill。人教一次，Agent 用万次。
+为 AI Agent 提供安全、稳定的远程运维技能。人教一次，Agent 用万次。
 
-> *I taught my parrot to write Shell — record once, let AI execute a thousand times.*
+> *Demonstrate once, execute anywhere — secure, stable remote skills for AI Agents.*
 
 ## Quick Start
 
@@ -20,6 +20,7 @@ parrot learn -t "部署 user-api 服务"
 # ... 敲你的运维命令 ... exit
 
 # 3. 本机：安装 mcp，配置 Claude Code
+cd parrot-ops
 pip install ./parrot-mcp
 # 编辑 ~/.claude/mcp.json:
 # { "mcpServers": { "parrot": {
@@ -41,9 +42,12 @@ pip install ./parrot-mcp
 
 ## 架构
 
+<details>
+<summary>展开架构图</summary>
+
 ```
 目标机 (Linux)                        本机 (Win/Mac/Linux)
- 
+
  Record once                            Execute everywhere
      │                                       │
      ▼                                       ▼
@@ -58,13 +62,88 @@ parrot-recorder     Skill YAML          parrot-mcp
                                        "execute deploy-service"
 ```
 
-## 模块
+</details>
 
-| 模块 | 在哪运行 | 干什么 |
+## 安装
+
+| 模块 | 方式 | 依赖 |
 |---|---|---|
-| `parrot-recorder` | 目标机 | asciinema 录制 → pyte 清洗 → LLM 提炼 → Skill YAML |
-| `parrot-agent` | 目标机 | 接收 Skill，本地执行，审计日志，回滚，并发控制 |
-| `parrot-mcp` | 本机 | Skill YAML → MCP Tool，对接 Claude Code |
+| parrot-recorder | `pip install ./parrot-recorder` | Python ≥ 3.10, asciinema (自动安装) |
+| parrot-agent | `pip install ./parrot-agent` | Python ≥ 3.10, Linux |
+| parrot-mcp | `pip install ./parrot-mcp` | Python ≥ 3.10 |
+
+> 尚未发布到 PyPI，当前从源码安装。后续可直接 `pip install parrot-recorder`。
+
+## 使用示例
+
+**录制一个 Docker 部署 Skill：**
+
+```bash
+parrot learn -t "部署 user-api 服务"
+[parrot] 开始录制... (输入 exit 结束)
+
+root@host:~$ docker build -t user-api:latest .
+root@host:~$ docker stop user-api && docker rm user-api
+root@host:~$ docker run -d -p 8080:8080 --name user-api user-api:latest
+root@host:~$ exit
+
+[parrot] 检测到 3 条命令，正在生成 Skill YAML...
+[parrot] 已保存: skills/deploy-user-api.skill.yaml
+Register to agent? Enter URL or blank to skip: http://127.0.0.1:9090
+[parrot] Registered 'deploy-user-api' to http://127.0.0.1:9090
+```
+
+**Agent 调用：**
+
+```
+Claude Code: "list skills"
+ → deploy-user-api, reload-nginx, health-check
+
+Claude Code: "execute deploy-user-api, service_name=user-api"
+ → parrot-agent 本地执行: build → stop-old → start
+ → 完成: build ✅, stop-old ✅, start ✅
+```
+
+## 命令参考
+
+| 命令 | 在哪运行 | 说明 |
+|---|---|---|
+| `parrot learn` | 目标机 | 录制操作 → 生成 Skill YAML |
+| `parrot learn --skip-llm` | 目标机 | 录制 → 保存中间数据（离线） |
+| `parrot compose <file> -t "描述"` | 任意 | 从中间数据生成 Skill YAML |
+| `parrot register <file> --agent <url>` | 任意 | 注册 Skill 到 agent |
+| `parrot new` | 任意 | 交互式创建 Skill（不录制） |
+| `parrot validate <file>` | 任意 | 校验 Skill YAML |
+| `parrot-agent --port 9090` | 目标机 | 启动执行引擎 |
+| `parrot-mcp --agent <url>` | 本机 | 启动 MCP 服务 |
+
+## 配置
+
+**parrot-recorder：** 项目根目录 `.env` 文件
+
+```bash
+PARROT_LLM_BACKEND=anthropic       # 或 openai
+PARROT_MODEL=claude-sonnet-4-6     # 模型选择
+ANTHROPIC_API_KEY=sk-ant-xxx       # API key
+# 代理或本地模型：
+# ANTHROPIC_BASE_URL=https://your-proxy.com
+# OPENAI_BASE_URL=http://localhost:11434/v1
+```
+
+**parrot-agent：** 命令行参数
+
+```bash
+parrot-agent --port 9090 --bind 127.0.0.1
+# --port  监听端口 (默认 9090)
+# --bind  绑定地址 (默认 127.0.0.1，外部访问用 0.0.0.0)
+```
+
+**parrot-mcp：** 命令行参数，或 Claude Code `mcp.json`
+
+```bash
+parrot-mcp --agent http://<目标机>:9090
+# --agent  parrot-agent 地址
+```
 
 ## 文档
 
