@@ -6,6 +6,38 @@
 
 > *Demonstrate once, execute anywhere — secure, stable remote skills for AI Agents.*
 
+
+## 使用示例
+
+1. 在终端操作一次部署流程，Parrot 自动提炼为可复用的 Skill
+
+```bash
+parrot learn -t "部署 user-api 服务"
+[parrot] 开始录制... (输入 exit 结束)
+
+root@host:~$ docker build -t user-api:latest .
+root@host:~$ docker stop user-api && docker rm user-api
+root@host:~$ docker run -d -p 8080:8080 --name user-api user-api:latest
+root@host:~$ exit
+
+[parrot] 检测到 3 条命令，正在生成 Skill YAML...
+[parrot] 已保存: skills/deploy-user-api.skill.yaml
+Register to agent? Enter URL or blank to skip: http://127.0.0.1:9090
+[parrot] Registered 'deploy-user-api' to http://127.0.0.1:9090
+```
+
+2. 通过 Claude Code 下发部署任务，Parrot 安全、稳定地执行 Shell 操作，全程可追溯、可回滚
+
+```
+Claude Code: "list skills"
+ → deploy-user-api, reload-nginx, health-check
+
+Claude Code: "execute deploy-user-api, service_name=user-api"
+ → parrot-agent 本地执行: build → stop-old → start
+ → 完成: build ✅, stop-old ✅, start ✅
+```
+
+
 ## Quick Start
 
 ```bash
@@ -72,37 +104,6 @@ parrot-recorder     Skill YAML          parrot-mcp
 | parrot-agent | `pip install ./parrot-agent` | Python ≥ 3.10, Linux |
 | parrot-mcp | `pip install ./parrot-mcp` | Python ≥ 3.10 |
 
-> 尚未发布到 PyPI，当前从源码安装。后续可直接 `pip install parrot-recorder`。
-
-## 使用示例
-
-**录制一个 Docker 部署 Skill：**
-
-```bash
-parrot learn -t "部署 user-api 服务"
-[parrot] 开始录制... (输入 exit 结束)
-
-root@host:~$ docker build -t user-api:latest .
-root@host:~$ docker stop user-api && docker rm user-api
-root@host:~$ docker run -d -p 8080:8080 --name user-api user-api:latest
-root@host:~$ exit
-
-[parrot] 检测到 3 条命令，正在生成 Skill YAML...
-[parrot] 已保存: skills/deploy-user-api.skill.yaml
-Register to agent? Enter URL or blank to skip: http://127.0.0.1:9090
-[parrot] Registered 'deploy-user-api' to http://127.0.0.1:9090
-```
-
-**Agent 调用：**
-
-```
-Claude Code: "list skills"
- → deploy-user-api, reload-nginx, health-check
-
-Claude Code: "execute deploy-user-api, service_name=user-api"
- → parrot-agent 本地执行: build → stop-old → start
- → 完成: build ✅, stop-old ✅, start ✅
-```
 
 ## 命令参考
 
