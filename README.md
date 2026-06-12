@@ -1,15 +1,19 @@
 # 🦜 Parrot Ops
 
-**演示一次，处处执行**
-
-为 AI Agent 提供安全、稳定的远程运维技能。人教一次，Agent 用万次。
+**演示一次，让 Agent 学会安全、稳定地运维**
 
 > *Demonstrate once, execute anywhere — secure, stable remote skills for AI Agents.*
 
+如果您遇到过这些情况：
+
+- 想让 Agent 帮忙运维，又不敢让它直接在服务器上随意试错——怕改错配置、停错服务
+- 想让 Agent 学会业务特有的操作流程，又要花大量心思写 prompt 或 Skill
+
+Parrot 可以帮到您。只需把正确操作在终端演示一次，Parrot 就能举一反三，在同类场景安全、稳定地执行Shell指令。
 
 ## 使用示例
 
-1. 在终端操作一次部署流程，Parrot 自动提炼为可复用的 Skill
+Step 1: 在终端操作一次部署流程，Parrot 自动提炼为可复用的 Skill
 
 ```bash
 parrot learn -t "部署 user-api 服务"
@@ -26,7 +30,7 @@ Register to agent? Enter URL or blank to skip: http://127.0.0.1:9090
 [parrot] Registered 'deploy-user-api' to http://127.0.0.1:9090
 ```
 
-2. 通过 Claude Code 下发部署任务，Parrot 安全、稳定地执行 Shell 操作，全程可追溯、可回滚
+Step 2: 通过 Claude Code 下发部署任务，Parrot 安全、稳定地执行 Shell 操作，全程可追溯、可回滚
 
 ```
 Claude Code: "list skills"
@@ -36,7 +40,6 @@ Claude Code: "execute deploy-user-api, service_name=user-api"
  → parrot-agent 本地执行: build → stop-old → start
  → 完成: build ✅, stop-old ✅, start ✅
 ```
-
 
 ## Quick Start
 
@@ -65,12 +68,12 @@ pip install ./parrot-mcp
 
 ## 它能做什么
 
-| 场景 | 之前 | 之后 |
-|---|---|---|
-| 部署服务 | 每次手动敲命令 | 一句 "execute deploy-service" |
-| 团队新人接手 | 翻 Wiki 或问老同事 | Agent 调用已有的 Skill |
-| 重复性运维 | 每次都靠记忆 | Skill YAML 固化，可审计可回滚 |
-| 生产环境操作 | 提心吊胆怕敲错 | 人类审核一次，Agent 执行 N 次 |
+| 场景     | 之前           | 之后                          |
+| ------ | ------------ | --------------------------- |
+| 部署服务   | 每次手动敲命令      | 一句 "execute deploy-service" |
+| 团队新人接手 | 翻 Wiki 或问老同事 | Agent 调用已有的 Skill           |
+| 重复性运维  | 每次都靠记忆       | Skill YAML 固化，可审计可回滚        |
+| 生产环境操作 | 提心吊胆怕敲错      | 人类审核一次，Agent 执行 N 次         |
 
 ## 架构
 
@@ -98,25 +101,24 @@ parrot-recorder     Skill YAML          parrot-mcp
 
 ## 安装
 
-| 模块 | 方式 | 依赖 |
-|---|---|---|
+| 模块              | 方式                              | 依赖                              |
+| --------------- | ------------------------------- | ------------------------------- |
 | parrot-recorder | `pip install ./parrot-recorder` | Python ≥ 3.10, asciinema (自动安装) |
-| parrot-agent | `pip install ./parrot-agent` | Python ≥ 3.10, Linux |
-| parrot-mcp | `pip install ./parrot-mcp` | Python ≥ 3.10 |
-
+| parrot-agent    | `pip install ./parrot-agent`    | Python ≥ 3.10, Linux            |
+| parrot-mcp      | `pip install ./parrot-mcp`      | Python ≥ 3.10                   |
 
 ## 命令参考
 
-| 命令 | 在哪运行 | 说明 |
-|---|---|---|
-| `parrot learn` | 目标机 | 录制操作 → 生成 Skill YAML |
-| `parrot learn --skip-llm` | 目标机 | 录制 → 保存中间数据（离线） |
-| `parrot compose <file> -t "描述"` | 任意 | 从中间数据生成 Skill YAML |
-| `parrot register <file> --agent <url>` | 任意 | 注册 Skill 到 agent |
-| `parrot new` | 任意 | 交互式创建 Skill（不录制） |
-| `parrot validate <file>` | 任意 | 校验 Skill YAML |
-| `parrot-agent --port 9090` | 目标机 | 启动执行引擎 |
-| `parrot-mcp --agent <url>` | 本机 | 启动 MCP 服务 |
+| 命令                                     | 在哪运行 | 说明                   |
+| -------------------------------------- | ---- | -------------------- |
+| `parrot learn`                         | 目标机  | 录制操作 → 生成 Skill YAML |
+| `parrot learn --skip-llm`              | 目标机  | 录制 → 保存中间数据（离线）      |
+| `parrot compose <file> -t "描述"`        | 任意   | 从中间数据生成 Skill YAML   |
+| `parrot register <file> --agent <url>` | 任意   | 注册 Skill 到 agent     |
+| `parrot new`                           | 任意   | 交互式创建 Skill（不录制）     |
+| `parrot validate <file>`               | 任意   | 校验 Skill YAML        |
+| `parrot-agent --port 9090`             | 目标机  | 启动执行引擎               |
+| `parrot-mcp --agent <url>`             | 本机   | 启动 MCP 服务            |
 
 ## 配置
 
@@ -152,3 +154,4 @@ parrot-mcp --agent http://<目标机>:9090
 - [执行引擎](docs/parrot-agent-spec.md)
 - [MCP 接口](docs/parrot-mcp-spec.md)
 - [录制场景验证](docs/recording-scenarios.md)
+
